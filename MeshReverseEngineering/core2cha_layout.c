@@ -11,8 +11,8 @@
 
 #define NUM_CHA_COUNTERS 4
 #define NUM_TILE_ENABLED 24
-#define EPOCHS 30
-#define LOOP_NUM 10000000
+#define EPOCHS 1
+#define LOOP_NUM 1000000000
 #define MSRFLIENAME  "/dev/cpu/0/msr"
 
 void show_counters();
@@ -66,35 +66,52 @@ int main(){
             printf("Programming CHA counters\n");
             for (tile=0; tile<NUM_TILE_ENABLED; tile++) {
 
-                    msr_num = 0xe00 + 0x10*tile;		// box control register -- set enable bit
-                    msr_val = 0x00400000;
+                    msr_num = 0x2000 + 0x10*tile;		// box control register -- set enable bit
+                    msr_val = 0x1;
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);// box control register -- set enable bit
+                    msr_val = 0x101;
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0xe00 + 0x10*tile + 1;	// ctl0
+                    msr_num = 0x2002 + 0x10*tile;	// ctl0
                     msr_val = cha_perfevtsel[0];
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0xe00 + 0x10*tile + 2;	// ctl1
+                    msr_num = 0x2003 + 0x10*tile;	// ctl1
                     msr_val = cha_perfevtsel[1];
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0xe00 + 0x10*tile + 3;	// ctl2
+                    msr_num = 0x2004 + 0x10*tile;	// ctl2
                     msr_val = cha_perfevtsel[2];
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0xe00 + 0x10*tile + 4;	// ctl3
+                    msr_num = 0x2005 + 0x10*tile;	// ctl3
                     msr_val = cha_perfevtsel[3];
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0xe00 + 0x10*tile + 5;	// filter0
+                    msr_num = 0x200e + 0x10*tile;	// filter0
                     msr_val = cha_filter0;				// core & thread
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+
+                    msr_num = 0x2000 + 0x10*tile;		// box control register -- set enable bit
+                    msr_val = 0x201;
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);// box control register -- set enable bit
+                    msr_val = 0x0;
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
                 }
-            
+                    msr_num = 0x2fd0;	// filter0
+                    msr_val = 0x1;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+                    msr_num = 0x2fd0;	// filter0
+                    msr_val = 0x0;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+                    msr_num = 0x2fde;	// filter0
+                    msr_val = 0x400000;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+
             //  Counters before core busy
             for (tile=0; tile<NUM_TILE_ENABLED; tile++) {
                 for (counter=0; counter<NUM_CHA_COUNTERS; counter++) {
-                    msr_num = 0xe00 + 0x10*tile + 0x8 + counter;
+                    msr_num = 0x2000 + 0x10*tile + 0x8 + counter;
                     pread(fd,&msr_val,sizeof(msr_val),msr_num);
                     cha_counts[tile][counter][0] = msr_val;
                 }
@@ -105,18 +122,19 @@ int main(){
            //  Counters after core busy
             for (tile=0; tile<NUM_TILE_ENABLED; tile++) {
                 for (counter=0; counter<NUM_CHA_COUNTERS; counter++) {
-                    msr_num = 0xe00 + 0x10*tile + 0x8 + counter;
+                    msr_num = 0x2000 + 0x10*tile + 0x8 + counter;
                     pread(fd,&msr_val,sizeof(msr_val),msr_num);
                     cha_counts[tile][counter][1] = msr_val;
                 }
             }
+
             // Record the changes of event "LCORE_PMA GV"
             for (tile=0; tile<NUM_TILE_ENABLED; tile++) 
                 counters_changes[tile] += (cha_counts[tile][2][1]-cha_counts[tile][2][0]);
         }
         // Map the cha with largest counters to this core
         core2cha_map[core] = max_counter_cha();
-        //show_counters();
+        show_counters();
     }
 
     /* Output the results */
