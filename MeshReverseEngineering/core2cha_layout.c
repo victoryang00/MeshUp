@@ -20,7 +20,7 @@ void attach_core(int);
 void make_core_busy(int processor);
 int max_counter_cha();
 
-uint32_t cha_perfevtsel[NUM_CHA_COUNTERS];
+uint64_t cha_perfevtsel[NUM_CHA_COUNTERS];
 long cha_counts[NUM_TILE_ENABLED][NUM_CHA_COUNTERS][2]; // 28 tiles per socket, 4 counters per tile, 2 times (before and after)
 uint64_t counters_changes[NUM_TILE_ENABLED];
 uint64_t core2cha_map[NUM_TILE_ENABLED];
@@ -45,10 +45,10 @@ int main(){
 	}
 
     /* Set the PMON control resgister position*/
-    cha_perfevtsel[0] = 0x00400217;     // CORE_PMA. C1 Transition
-    cha_perfevtsel[1] = 0x00400417;     // CORE_PMA. C1 State
-    cha_perfevtsel[2] = 0x00401017;     // *LCORE_PMA GV(We actually use this event)
-    cha_perfevtsel[3] = 0x00400534;		// LLC_LOOKUP.DATA_WRITE (WB from L2) <-- requires CHA_FILTER0[26:17]
+    cha_perfevtsel[0] = 0x70800000001c0;     // Instruction
+    cha_perfevtsel[1] = 0x7001000000183;     // CORE_PMA. C1 State
+    cha_perfevtsel[2] = 0x7001000000483;     // *LCORE_PMA GV(We actually use this event)
+    cha_perfevtsel[3] = 0x7001000001017;		// LLC_LOOKUP.DATA_WRITE (WB from L2) <-- requires CHA_FILTER0[26:17]
 
     uint64_t cha_filter0 =   0x0001c000;	// set bits 20,19,18 HES -- all SF lookups, no LLC lookups
 
@@ -64,67 +64,132 @@ int main(){
 
         for(int j=0; j<EPOCHS; j++){
             printf("Programming CHA counters\n");
-            for (tile=0; tile<NUM_TILE_ENABLED; tile++) {
+            for (tile=0; tile<12; tile++) {
 
-                    msr_num = 0x2000 + 0x10*tile;		// box control register -- set enable bit
+                    msr_num = 0x3000 + 0x10*tile;		// box control register -- set enable bit
                     msr_val = 0x1;
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);// box control register -- set enable bit
                     msr_val = 0x101;
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0x2002 + 0x10*tile;	// ctl0
+                    msr_num = 0x3002 + 0x10*tile;	// ctl0
                     msr_val = cha_perfevtsel[0];
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0x2003 + 0x10*tile;	// ctl1
+                    msr_num = 0x3003 + 0x10*tile;	// ctl1
                     msr_val = cha_perfevtsel[1];
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0x2004 + 0x10*tile;	// ctl2
+                    msr_num = 0x3004 + 0x10*tile;	// ctl2
                     msr_val = cha_perfevtsel[2];
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0x2005 + 0x10*tile;	// ctl3
+                    msr_num = 0x3005 + 0x10*tile;	// ctl3
                     msr_val = cha_perfevtsel[3];
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0x200e + 0x10*tile;	// filter0
+                    msr_num = 0x300e + 0x10*tile;	// filter0
                     msr_val = cha_filter0;				// core & thread
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
-                    msr_num = 0x2000 + 0x10*tile;		// box control register -- set enable bit
+                    msr_num = 0x3000 + 0x10*tile;		// box control register -- set enable bit
                     msr_val = 0x201;
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);// box control register -- set enable bit
                     msr_val = 0x0;
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
                 }
-                    msr_num = 0x2fd0;	// filter0
+                for (tile=0; tile< 12; tile++) {
+
+                    msr_num = 0x3400 + 0x10*tile;		// box control register -- set enable bit
+                    msr_val = 0x1;
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);// box control register -- set enable bit
+                    msr_val = 0x101;
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+
+                    msr_num = 0x3402 + 0x10*tile;	// ctl0
+                    msr_val = cha_perfevtsel[0];
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+
+                    msr_num = 0x3403 + 0x10*tile;	// ctl1
+                    msr_val = cha_perfevtsel[1];
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+
+                    msr_num = 0x3404 + 0x10*tile;	// ctl2
+                    msr_val = cha_perfevtsel[2];
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+
+                    msr_num = 0x3405 + 0x10*tile;	// ctl3
+                    msr_val = cha_perfevtsel[3];
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+
+                    msr_num = 0x340e + 0x10*tile;	// filter0
+                    msr_val = cha_filter0;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+
+                    msr_num = 0x3400 + 0x10*tile;		// box control register -- set enable bit
+                    msr_val = 0x201;
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);// box control register -- set enable bit
+                    msr_val = 0x0;
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+                }
+                    msr_num = 0x2fc0;	// filter0
                     msr_val = 0x1;				// core & thread
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
-                    msr_num = 0x2fd0;	// filter0
-                    msr_val = 0x0;				// core & thread
+                    msr_num = 0x2fc0;	// filter0
+                    msr_val = 0x101;				// core & thread
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
-                    msr_num = 0x2fde;	// filter0
-                    msr_val = 0x400000;				// core & thread
+                    msr_num = 0x2fce;	// filter0
+                    msr_val = 0x28140c;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+                    msr_num = 0x2fc2;	// read power
+                    msr_val = 0x1;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+                    msr_num = 0x2fc3;	// filter0
+                    msr_val = 0xb;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+                    msr_num = 0x2fc4;	// filter0
+                    msr_val = 0xc;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+                    msr_num = 0x2fc5;	// filter0
+                    msr_val = 0xd;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+                    msr_num = 0x2fc0;	// filter0
+                    msr_val = 0x201;				// core & thread
+                    pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
+                    msr_num = 0x2fc0;	// filter0
+                    msr_val = 0x0;				// core & thread
                     pwrite(fd,&msr_val,sizeof(msr_val),msr_num);
 
             //  Counters before core busy
-            for (tile=0; tile<NUM_TILE_ENABLED; tile++) {
+            for (tile=0; tile<12; tile++) {
                 for (counter=0; counter<NUM_CHA_COUNTERS; counter++) {
-                    msr_num = 0x2000 + 0x10*tile + 0x8 + counter;
+                    msr_num = 0x3000 + 0x10*tile + 0x8 + counter;
                     pread(fd,&msr_val,sizeof(msr_val),msr_num);
                     cha_counts[tile][counter][0] = msr_val;
                 }
             }
-            
+            for (tile=0; tile<12; tile++) {
+                for (counter=0; counter<NUM_CHA_COUNTERS; counter++) {
+                    msr_num = 0x3400 + 0x10*tile + 0x8 + counter;
+                    pread(fd,&msr_val,sizeof(msr_val),msr_num);
+                    cha_counts[tile+12][counter][0] = msr_val;
+                }
+            }
             make_core_busy(core);
 
            //  Counters after core busy
-            for (tile=0; tile<NUM_TILE_ENABLED; tile++) {
+            for (tile=0; tile<12; tile++) {
                 for (counter=0; counter<NUM_CHA_COUNTERS; counter++) {
-                    msr_num = 0x2000 + 0x10*tile + 0x8 + counter;
+                    msr_num = 0x3000 + 0x10*tile + 0x8 + counter;
                     pread(fd,&msr_val,sizeof(msr_val),msr_num);
                     cha_counts[tile][counter][1] = msr_val;
+                }
+            }
+            for (tile=0; tile<12; tile++) {
+                for (counter=0; counter<NUM_CHA_COUNTERS; counter++) {
+                    msr_num = 0x3400 + 0x10*tile + 0x8 + counter;
+                    pread(fd,&msr_val,sizeof(msr_val),msr_num);
+                    cha_counts[tile+12][counter][1] = msr_val;
                 }
             }
 
@@ -155,8 +220,13 @@ void show_counters(){
 
     puts("----Final----");
     puts("tile\t counter0 counter1 counter2 counter3");
-    for (int tile=0; tile<NUM_TILE_ENABLED; tile++){
-        printf("%d:\t", tile);
+    for (int tile=0; tile<NUM_TILE_ENABLED; tile++){\
+    if (tile <12)
+        printf("%llx:\t", 0x3000 + 0x10*tile);
+    else
+    {
+        printf("%llx:\t", 0x3400 + 0x10*(tile-12));
+    }
         for(int counter=0; counter<NUM_CHA_COUNTERS; counter++)
             printf("%ld\t", cha_counts[tile][counter][1]);
         putchar('\n');
@@ -166,7 +236,12 @@ void show_counters(){
     puts("----Diff----");
     puts("tile\t counter0 counter1 counter2 counter3");
     for (int tile=0; tile<NUM_TILE_ENABLED; tile++){
-        printf("%d:\t", tile);
+    if (tile <16)
+        printf("%llx:\t", 0x3000 + 0x10*tile);
+    else
+    {
+        printf("%llx:\t", 0x3400 + 0x10*(tile-12));
+    }
         for(int counter=0; counter<NUM_CHA_COUNTERS; counter++)
             printf("%15ld\t", cha_counts[tile][counter][1]-cha_counts[tile][counter][0]);
         putchar('\n');
