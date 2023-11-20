@@ -29,8 +29,8 @@ long cha_counts[NUM_TILE_ENABLED][NUM_CHA_COUNTERS][2]; // 28 tiles per socket, 
 uint64_t counters_changes[NUM_TILE_ENABLED];
 uint64_t core2cha_map[NUM_TILE_ENABLED];
 
-int main(int argc, char *argv[]) {
-    int fd, tile, counter;
+void get_core2cha() {
+    int fd, tile, counter, r;
     uint64_t msr_val, msr_num;
 
     /* Open msr fd of socket 0 */
@@ -49,10 +49,10 @@ int main(int argc, char *argv[]) {
     }
 
     /* Set the PMON control resgister position*/
-    // cha_perfevtsel[0] = 0x00c8c7ff00000135; // UNC_CHA_TOR_INSERTS.IA_CLFLUSHOPT
+    cha_perfevtsel[0] = 0x00c8c7ff00000135; // UNC_CHA_TOR_INSERTS.IA_CLFLUSHOPT
     // cha_perfevtsel[0] = 0x00c816fe00000136; // UNC_CHA_TOR_INSERTS.IA_CLFLUSHOPT
     // cha_perfevtsel[0] = 0x00000080000137; // UNC_CHA_LLC_VICTIMS.REMOTE_M
-    cha_perfevtsel[0] =    0x012a; // UNC_CHA_LLC_VICTIMS.REMOTE_M
+    // cha_perfevtsel[0] =    0x012a; // UNC_CHA_LLC_VICTIMS.REMOTE_M
     // cha_perfevtsel[1] = 0xc817fe00000135; // Instruction
     // cha_perfevtsel[2] = 0xc817fe00000534; // LLC Misses
     // cha_perfevtsel[3] = atoi(argv[1]);
@@ -76,66 +76,66 @@ int main(int argc, char *argv[]) {
 
                 msr_num = 0x2000 + 0x10 * tile; // box control register -- set enable bit
                 msr_val = 0x1;
-                pwrite(fd, &msr_val, sizeof(msr_val),
-                       msr_num); // box control register -- set enable bit
+                r = pwrite(fd, &msr_val, sizeof(msr_val),
+                           msr_num); // box control register -- set enable bit
                 msr_val = 0x101;
-                pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+                r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
 
                 msr_num = 0x2002 + 0x10 * tile; // ctl0
                 msr_val = cha_perfevtsel[0];
-                pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+                r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
 
                 // msr_num = 0x2003 + 0x10 * tile; // ctl1
                 // msr_val = cha_perfevtsel[1];
-                // pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+                // r=pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
 
                 // msr_num = 0x2004 + 0x10 * tile; // ctl2
                 // msr_val = cha_perfevtsel[2];
-                // pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+                // r=pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
 
                 // msr_num = 0x2005 + 0x10 * tile; // ctl3
                 // msr_val = cha_perfevtsel[3];
-                // pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+                // r=pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
 
                 msr_num = 0x200e + 0x10 * tile; // filter0
                 msr_val = cha_filter0; // core & thread
-                pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+                r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
 
                 msr_num = 0x2000 + 0x10 * tile; // box control register -- set enable bit
                 msr_val = 0x201;
-                pwrite(fd, &msr_val, sizeof(msr_val),
-                       msr_num); // box control register -- set enable bit
+                r = pwrite(fd, &msr_val, sizeof(msr_val),
+                           msr_num); // box control register -- set enable bit
                 msr_val = 0x0;
-                pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+                r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
             }
             msr_num = 0x2fc0; // filter0
             msr_val = 0x1; // core & thread
-            pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+            r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
             msr_num = 0x2fc0; // filter0
             msr_val = 0x101; // core & thread
-            pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+            r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
             msr_num = 0x2fce; // filter0
             msr_val = 0x28140c; // core & thread
-            pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+            r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
             msr_num = 0x2fc2; // read power
             msr_val = 0x1; // core & thread
-            pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+            r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
             msr_num = 0x2fc3; // filter0
             msr_val = 0xb; // core & thread
-            pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+            r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
             msr_num = 0x2fc4; // filter0
             msr_val = 0xc; // core & thread
-            pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+            r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
             msr_num = 0x2fc5; // filter0
             msr_val = 0xd; // core & thread
-            pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+            r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
             msr_num = 0x2fc0; // filter0
             msr_val = 0x201; // core & thread
-            pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+            r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
             msr_num = 0x2fc0; // filter0
             msr_val = 0x0; // core & thread
-            pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
-            char *buf = malloc(LOOP_NUM);
+            r = pwrite(fd, &msr_val, sizeof(msr_val), msr_num);
+            char *buf = (char *)malloc(LOOP_NUM);
             buf = buf + 64 - (((long)buf) % 64);
             //  Counters before core busy
             for (tile = 0; tile < NUM_TILE_ENABLED; tile++) {
@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
         }
         // Map the cha with largest counters to this core
         core2cha_map[core] = max_counter_cha();
-        show_counters();
+        // show_counters();
     }
 
     /* Output the results */
@@ -237,8 +237,7 @@ void make_core_busy(int processor, char *buf) {
                  "add %[stride], %%r8 \n"
                  "cmp %[end_addr], %%r8 \n"
                  "jl LOOP_CACHEPROBE \n"
-                 "mfence \n"
-                 ::[start_addr] "r"(start_addr),
+                 "mfence \n" ::[start_addr] "r"(start_addr),
                  [end_addr] "r"(end_addr), [stride] "r"(stride)
                  : "%r8");
     return;
