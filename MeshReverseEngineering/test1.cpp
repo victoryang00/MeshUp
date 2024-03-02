@@ -167,12 +167,12 @@ int stick_this_thread_to_core(int core_id) {
 int main() {
     vector<vector<int>> mapping_template = {
         {3, 4, 4, 3, 4, 0, 0}, //
-        {1, 1, 1, 1, 1, 1, 1}, // 1 is a core location
-        {2, 1, 1, 1, 1, 1, 2}, // 2 is IMC (internal memory controller)
-        {1, 1, 1, 1, 1, 1, 1}, // 3 UPI
-        {1, 1, 1, 1, 1, 1, 1}, // 4 PCIE/CXL
-        {2, 1, 1, 1, 1, 1, 2}, //
-        {3, 4, 4, 1, 4, 1, 1},
+        {0, 1, 1, 1, 0, 1, 1}, // 1 is a core location
+        {2, 0, 1, 1, 1, 0, 2}, // 2 is IMC (internal memory controller)
+        {0, 1, 1, 0, 1, 1, 1}, // 3 UPI
+        {1, 1, 1, 1, 1, 0, 0}, // 4 PCIE/CXL
+        {2, 0, 1, 1, 0, 1, 2}, //
+        {3, 4, 4, 1, 4, 1, 0},
     };
     cha_mapping cm(NUM_CHA_BOXES, mapping_template);
     cout << std::format("{}", cm);
@@ -378,9 +378,6 @@ void cha_mapping::update_cha_mapping(int counts[][NUM_CHA_COUNTERS], int focus) 
                             // or we are sending and we shouldn't be able to
                             (data_movement[i][j] &&
                              !(in_bounds(coord + (pair<int, int>)Dir(j)) && data_sink(coord + (pair<int, int>)Dir(j))));
-                        // if(i == 14) {cout<< format("cha {} in dir {} has status {} for ind
-                        // {} at coord ", i, j, status, ind) << std::format("{}", coord) <<
-                        // std::format("{}", coord + (pair<int,int>)Dir(j)) << "\n";}
                         return status;
                     }),
                 possibles[i].end());
@@ -388,6 +385,49 @@ void cha_mapping::update_cha_mapping(int counts[][NUM_CHA_COUNTERS], int focus) 
     }
     // check for flow
     for (int i = 0; i < cha_boxes; i++) {
+	    int dir = 0;
+        for (int j = 1; j < 4; j++) {
+		if (counts[i][j] > counts[i][dir]){
+			dir = j;
+		}
+	}
+			pair<int, int> moveDir = Dir(dir);
+			int max_dirx = -maxx, max_diry = -maxy;
+			for(auto index : possibles[focus]){
+				if(max_dirx < ind_to_coord[index].first * -moveDir.first){
+					max_dirx = ind_to_coord[index].first * -moveDir.first;
+				}
+				if(max_diry < ind_to_coord[index].second *-moveDir.second){
+					max_diry = ind_to_coord[index].second *-moveDir.second;
+				}
+			}
+			if(max_dirx<0 || max_diry<0){
+				max_dirx *= -1;
+				max_diry *= -1;
+			}
+
+
+            possibles[i].erase( //
+                std::remove_if( //
+                    possibles[i].begin(), possibles[i].end(),
+                    [&](int ind) {
+                        auto coord = ind_to_coord[ind];
+			bool status = false;
+			if(max_dirx == 0){
+			// handle verticals
+			return max_diry * moveDir.second <= coord.second * moveDir.second;
+
+			}
+			else{
+			// or horizontals
+
+			}
+			
+
+                        return status;
+                    }),
+                possibles[i].end());
+		
     }
     // check for edges
     for (int i = 0; i < cha_boxes; i++) {

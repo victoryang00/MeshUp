@@ -16,7 +16,7 @@
 #define EPOCHS 1
 #define LOOP_NUM 64 * 1024 * 1024
 #define MSRFLIENAME "/dev/cpu/0/msr"
-#define _mm_clflushopt(addr) asm volatile(".byte 0x66; clflush %0" : "+m"(*(volatile char *)addr));
+#define _mm_clflushopt(addr) asm volatile(".byte 0x66; clflushopt %0" : "+m"(*(volatile char *)addr));
 
 void show_counters();
 void attach_core(int);
@@ -49,7 +49,7 @@ void get_core2cha() {
     }
 
     /* Set the PMON control resgister position*/
-    cha_perfevtsel[0] = 0x00c8c7ff00000135; // UNC_CHA_TOR_INSERTS.IA_CLFLUSHOPT
+    cha_perfevtsel[0] = 0x00c8c7ff00000d92; // UNC_CHA_TOR_INSERTS.IA_CLFLUSHOPT
     // cha_perfevtsel[0] = 0x00c816fe00000136; // UNC_CHA_TOR_INSERTS.IA_CLFLUSHOPT
     // cha_perfevtsel[0] = 0x00000080000137; // UNC_CHA_LLC_VICTIMS.REMOTE_M
     // cha_perfevtsel[0] =    0x012a; // UNC_CHA_LLC_VICTIMS.REMOTE_M
@@ -224,22 +224,26 @@ void attach_core(int cpu) {
 
 void make_core_busy(int processor, char *buf) {
     attach_core(processor);
-    char *start_addr = buf;
-    char *end_addr = buf + LOOP_NUM;
-    long stride = 64;
-    asm volatile("mov %[start_addr], %%r8 \n"
-                 "movq %[start_addr], %%xmm0 \n"
-                 "LOOP_CACHEPROBE: \n"
-                 "vmovdqa64 %%zmm0, 0x0(%%r8) \n"
-                 "clflush (%%r8) \n"
-                 "vmovdqa64 %%zmm0, 0x40(%%r8) \n"
-                 "clflush 0x40(%%r8) \n"
-                 "add %[stride], %%r8 \n"
-                 "cmp %[end_addr], %%r8 \n"
-                 "jl LOOP_CACHEPROBE \n"
-                 "mfence \n" ::[start_addr] "r"(start_addr),
-                 [end_addr] "r"(end_addr), [stride] "r"(stride)
-                 : "%r8");
+    // char *start_addr = buf;
+    // char *end_addr = buf + LOOP_NUM;
+    // long stride = 64;
+    // asm volatile("mov %[start_addr], %%r8 \n"
+    //              "movq %[start_addr], %%xmm0 \n"
+    //              "LOOP_CACHEPROBE: \n"
+    //              "vmovdqa64 %%zmm0, 0x0(%%r8) \n"
+    //              "clflush (%%r8) \n"
+    //              "vmovdqa64 %%zmm0, 0x40(%%r8) \n"
+    //              "clflush 0x40(%%r8) \n"
+    //              "add %[stride], %%r8 \n"
+    //              "cmp %[end_addr], %%r8 \n"
+    //              "jl LOOP_CACHEPROBE \n"
+    //              "mfence \n" ::[start_addr] "r"(start_addr),
+    //              [end_addr] "r"(end_addr), [stride] "r"(stride)
+    //              : "%r8");
+    for (int i = 0; i < LOOP_NUM; i++) {
+        _mm_clflushopt(buf);
+        buf += 64;
+    }
     return;
 }
 
