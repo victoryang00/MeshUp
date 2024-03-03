@@ -8,13 +8,10 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
-#include <fmt/color.h>
-#include <fmt/format.h>
-#include <fmt/os.h>
-#include <fmt/ostream.h>
 #include <fstream>
 #include <iostream>
 #include <list>
+#include <format>
 #include <ranges>
 #include <source_location>
 #include <sstream>
@@ -73,7 +70,6 @@ private:
 };
 
 std::string level2string(LogLevel level);
-fmt::color level2color(LogLevel level);
 
 #define LOG_IF(level) LogWriter(std::source_location::current(), level) < LogStream()
 #define LOG(level) LOG_##level

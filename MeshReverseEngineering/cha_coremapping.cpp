@@ -165,15 +165,17 @@ int stick_this_thread_to_core(int core_id) {
 }
 
 int main() {
+    // passed in
     vector<vector<int>> mapping_template = {
         {3, 4, 4, 3, 4, 0, 0}, //
-        {0, 1, 1, 1, 0, 1, 1}, // 1 is a core location
-        {2, 0, 1, 1, 1, 0, 2}, // 2 is IMC (internal memory controller)
-        {0, 1, 1, 0, 1, 1, 1}, // 3 UPI
-        {1, 1, 1, 1, 1, 0, 0}, // 4 PCIE/CXL
-        {2, 0, 1, 1, 0, 1, 2}, //
-        {3, 4, 4, 1, 4, 1, 0},
+        {5, 1, 1, 1, 5, 1, 1}, // 1 is a core location
+        {2, 5, 1, 1, 1, 5, 2}, // 2 is IMC (internal memory controller)
+        {5, 1, 1, 5, 1, 1, 1}, // 3 UPI
+        {1, 1, 1, 1, 1, 5, 5}, // 4 PCIE/CXL
+        {2, 5, 1, 1, 5, 1, 2}, // 5 Disabled Cores
+        {3, 4, 4, 1, 4, 1, 5}, //
     };
+
     cha_mapping cm(NUM_CHA_BOXES, mapping_template);
     cout << std::format("{}", cm);
     long logical_core_count = sysconf(_SC_NPROCESSORS_ONLN);
@@ -243,6 +245,9 @@ int main() {
     }
 
     /// in the first place, I will just stick thread to core0 and read data from RAM on this thread.
+    if (){
+        
+    }
     for (int lproc = 0; lproc < NUM_CHA_BOXES; lproc++) {
         LOG_INFO << "Sticking main thread to core " << lproc << "\n";
         stick_this_thread_to_core(lproc);

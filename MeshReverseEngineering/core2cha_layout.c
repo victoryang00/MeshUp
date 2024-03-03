@@ -224,22 +224,22 @@ void attach_core(int cpu) {
 
 void make_core_busy(int processor, char *buf) {
     attach_core(processor);
-    // char *start_addr = buf;
-    // char *end_addr = buf + LOOP_NUM;
-    // long stride = 64;
-    // asm volatile("mov %[start_addr], %%r8 \n"
-    //              "movq %[start_addr], %%xmm0 \n"
-    //              "LOOP_CACHEPROBE: \n"
-    //              "vmovdqa64 %%zmm0, 0x0(%%r8) \n"
-    //              "clflush (%%r8) \n"
-    //              "vmovdqa64 %%zmm0, 0x40(%%r8) \n"
-    //              "clflush 0x40(%%r8) \n"
-    //              "add %[stride], %%r8 \n"
-    //              "cmp %[end_addr], %%r8 \n"
-    //              "jl LOOP_CACHEPROBE \n"
-    //              "mfence \n" ::[start_addr] "r"(start_addr),
-    //              [end_addr] "r"(end_addr), [stride] "r"(stride)
-    //              : "%r8");
+    char *start_addr = buf;
+    char *end_addr = buf + LOOP_NUM;
+    long stride = 64;
+    asm volatile("mov %[start_addr], %%r8 \n"
+                 "movq %[start_addr], %%xmm0 \n"
+                 "LOOP_CACHEPROBE: \n"
+                 "vmovdqa64 %%zmm0, 0x0(%%r8) \n"
+                 "clflush (%%r8) \n"
+                 "vmovdqa64 %%zmm0, 0x40(%%r8) \n"
+                 "clflush 0x40(%%r8) \n"
+                 "add %[stride], %%r8 \n"
+                 "cmp %[end_addr], %%r8 \n"
+                 "jl LOOP_CACHEPROBE \n"
+                 "mfence \n" ::[start_addr] "r"(start_addr),
+                 [end_addr] "r"(end_addr), [stride] "r"(stride)
+                 : "%r8");
     for (int i = 0; i < LOOP_NUM; i++) {
         _mm_clflushopt(buf);
         buf += 64;
