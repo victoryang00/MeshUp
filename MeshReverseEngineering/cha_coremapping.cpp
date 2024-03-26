@@ -164,12 +164,12 @@ int main() {
     // passed in
     vector<vector<int>> mapping_template = {
         {3, 4, 4, 3, 4, 0, 0}, //
-        {1, 5, 5, 1, 1, 1, 1}, // 1 is a core location
-        {2, 1, 1, 5, 1, 1, 2}, // 2 is IMC (internal memory controller)
-        {1, 1, 5, 1, 1, 5, 1}, // 3 UPI
-        {1, 5, 1, 1, 1, 1, 5}, // 4 PCIE/CXL
-        {2, 1, 1, 1, 1, 1, 2}, // 5 Disabled Cores
-        {3, 4, 4, 5, 4, 5, 5}, //
+        {1, 1, 1, 1, 5, 1, 5}, // 1 is a core location
+        {2, 5, 1, 1, 1, 5, 2}, // 2 is IMC (internal memory controller)
+        {1, 1, 1, 5, 1, 1, 1}, // 3 UPI
+        {1, 1, 1, 1, 1, 5, 5}, // 4 PCIE/CXL
+        {2, 5, 1, 1, 5, 1, 2}, // 5 Disabled Cores
+        {3, 4, 4, 1, 4, 1, 5}, //
     };
 
     cha_mapping cm(NUM_CHA_BOXES, mapping_template);
@@ -207,6 +207,8 @@ int main() {
                     ++cha_index;
                 }
                 cm.update_cha_mapping(cha_count_diffs, 0);
+                cout << std::format("{}", cm);
+
                 // Optional: Print the array to verify
                 // printf("CHA count differences for socket 0, iteration %d\n", i);
                 // for (int i = 0; i < NUM_CHA_BOXES; ++i) {
@@ -427,46 +429,46 @@ void cha_mapping::update_cha_mapping(int counts[][NUM_CHA_COUNTERS], int focus) 
         }
     }
     // check for flow
-    for (int i = 0; i < cha_boxes; i++) {
-        int dir = 0;
-        for (int j = 1; j < 4; j++) {
-            if (counts[i][j] > counts[i][dir]) {
-                dir = j;
-            }
-        }
-        pair<int, int> moveDir = Dir(dir);
-        int max_dirx = -max_x, max_diry = -max_y;
-        for (auto index : possibles[focus]) {
-            if (max_dirx < ind_to_coord[index].first * -moveDir.first) {
-                max_dirx = ind_to_coord[index].first * -moveDir.first;
-            }
-            if (max_diry < ind_to_coord[index].second * -moveDir.second) {
-                max_diry = ind_to_coord[index].second * -moveDir.second;
-            }
-        }
-        if (max_dirx < 0 || max_diry < 0) {
-            max_dirx *= -1;
-            max_diry *= -1;
-        }
+    // for (int i = 0; i < cha_boxes; i++) {
+    //     int dir = 0;
+    //     for (int j = 1; j < 4; j++) {
+    //         if (counts[i][j] > counts[i][dir]) {
+    //             dir = j;
+    //         }
+    //     }
+    //     pair<int, int> moveDir = Dir(dir);
+    //     int max_dirx = -max_x, max_diry = -max_y;
+    //     for (auto index : possibles[focus]) {
+    //         if (max_dirx < ind_to_coord[index].first * -moveDir.first) {
+    //             max_dirx = ind_to_coord[index].first * -moveDir.first;
+    //         }
+    //         if (max_diry < ind_to_coord[index].second * -moveDir.second) {
+    //             max_diry = ind_to_coord[index].second * -moveDir.second;
+    //         }
+    //     }
+    //     if (max_dirx < 0 || max_diry < 0) {
+    //         max_dirx *= -1;
+    //         max_diry *= -1;
+    //     }
 
-        possibles[i].erase( //
-            std::remove_if( //
-                possibles[i].begin(), possibles[i].end(),
-                [&](int ind) {
-                    auto coord = ind_to_coord[ind];
-                    bool status = false;
-                    if (max_dirx == 0) {
-                        // handle verticals
-                        return max_diry * moveDir.second <= coord.second * moveDir.second;
-                    } else {
-                        return max_dirx * moveDir.first <= coord.first * moveDir.first;
-                        // or horizontals
-                    }
+    //     possibles[i].erase( //
+    //         std::remove_if( //
+    //             possibles[i].begin(), possibles[i].end(),
+    //             [&](int ind) {
+    //                 auto coord = ind_to_coord[ind];
+    //                 bool status = false;
+    //                 if (max_dirx == 0) {
+    //                     // handle verticals
+    //                     return max_diry * moveDir.second <= coord.second * moveDir.second;
+    //                 } else {
+    //                     // return max_dirx * moveDir.first <= coord.first * moveDir.first;
+    //                     // or horizontals
+    //                 }
 
-                    return status;
-                }),
-            possibles[i].end());
-    }
+    //                 return status;
+    //             }),
+    //         possibles[i].end());
+    // }
 }
 
 bool cha_mapping::in_bounds(pair<int, int> coord) const {
