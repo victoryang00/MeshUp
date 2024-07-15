@@ -1,3 +1,6 @@
+//
+// Created by Yiwei Yang on 7/15/24.
+//
 #include "logging.h"
 #include <algorithm>
 #include <cstdint>
@@ -67,16 +70,16 @@ Dir::Dir(int dir) : dir(dir){};
 Dir::operator int() { return dir; }
 Dir::operator pair<int, int>() {
     switch (dir) {
-    case 0:
-        return pair(-1, 0);
-    case 2:
-        return pair(0, -1);
-    case 1:
-        return pair(1, 0);
-    case 3:
-        return pair(0, 1);
-    default:
-        return pair(0, 0);
+        case 0:
+            return pair(-1, 0);
+        case 2:
+            return pair(0, -1);
+        case 1:
+            return pair(1, 0);
+        case 3:
+            return pair(0, 1);
+        default:
+            return pair(0, 0);
     }
 }
 
@@ -104,10 +107,10 @@ template <> struct std::formatter<pair<int, int>> {
     }
     // Formats the Matrix object into the output.
     template <typename FormatContext>
-    auto format(pair<int, int> const &m, FormatContext &&ctx) const -> decltype(ctx.out()) {
-        auto it = ctx.out();
-        format_to(it, "({}, {})", m.first, m.second);
-        return it;
+        auto format(pair<int, int> const &m, FormatContext &&ctx) const -> decltype(ctx.out()) {
+            auto it = ctx.out();
+            format_to(it, "({}, {})", m.first, m.second);
+            return it;
     }
 }; //*/
 
@@ -123,7 +126,6 @@ template <> struct std::formatter<cha_mapping> {
         auto it = ctx.out();
         format_to(it, "CHA_MAPPING:\n");
 
-        ctx.advance_to(format_to(ctx.out(), "CHA_MAPPING:\n"));
         for (const auto &[index, possible] : enumerate(m.possibles)) {
             it = std::format_to(it, "{}:", index);
             for (const auto &val : possible) {
@@ -159,19 +161,16 @@ int stick_this_thread_to_core(int core_id) {
     pthread_t current_thread = pthread_self();
     return pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
 }
-vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) { return mapping_template; }
-int main() {
-    // passed in
-    vector<vector<int>> mapping_template = {
-        {3, 4, 4, 3, 4, 0, 0}, //
-        {1, 1, 1, 1, 5, 1, 5}, // 1 is a core location
-        {2, 5, 1, 1, 1, 5, 2}, // 2 is IMC (internal memory controller)
-        {1, 1, 1, 5, 1, 1, 1}, // 3 UPI
-        {1, 1, 1, 1, 1, 5, 5}, // 4 PCIE/CXL
-        {2, 5, 1, 1, 5, 1, 2}, // 5 Disabled Cores
-        {3, 4, 4, 1, 4, 1, 5}, //
+vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
+    vector<vector<int>> mapping_template1 = {
+            {3, 4, 4, 3, 4, 0, 0}, //
+            {0, -1, -13, -23, 5, -22, 5}, // 1 is a core location
+            {2, 5, -8, -15, -14, 5, 2}, // 2 is IMC (internal memory controller)
+            {-3, -11, -2, 5, -16, -18, -20}, // 3 UPI
+            {-4, -6, -9, -21, -5, 5, 5}, // 4 PCIE/CXL
+            {2, 5, -7, -12, 5, -19, 2}, // 5 Disabled Cores
+            {3, 4, 4, -10, 4, -17, 5}, //
     };
-
     cha_mapping cm(NUM_CHA_BOXES, mapping_template);
     cout << std::format("{}", cm);
     long logical_core_count = sysconf(_SC_NPROCESSORS_ONLN);
@@ -181,7 +180,7 @@ int main() {
     processor_in_socket[0] = 0;
 
     /// in the first place, I will just stick thread to core0 and read data from RAM on this thread.
-    std::filesystem::path file_path("PMU.txt");
+    std::filesystem::path file_path("../PMU.txt");
 
     if (std::filesystem::exists(file_path)) {
         LOG_INFO << "The file exists.\n";
@@ -195,6 +194,7 @@ int main() {
             for (int i = 0; i < NUM_CHA_BOXES; i++) {
                 int cha_index = 0;
                 while (std::getline(file, line) && cha_index < NUM_CHA_BOXES) {
+                    printf("Line: %s\n", line.c_str());
                     std::istringstream iss(line);
                     std::string temp;
                     // Skip the initial Socket0-CHAxx part
@@ -210,14 +210,13 @@ int main() {
                 cout << std::format("{}", cm);
 
                 // Optional: Print the array to verify
-                // printf("CHA count differences for socket 0, iteration %d\n", i);
-                // for (int i = 0; i < NUM_CHA_BOXES; ++i) {
-                //     for (int j = 0; j < NUM_CHA_COUNTERS; ++j) {
-                //         std::cout << cha_count_diffs[i][j] << " ";
-                //     }
-                //     std::cout << std::endl;
-                // }
-                // std::getline(file, line);
+                 printf("CHA count differences for socket 0, iteration %d\n", i);
+                 for (int i = 0; i < NUM_CHA_BOXES; ++i) {
+                     for (int j = 0; j < NUM_CHA_COUNTERS; ++j) {
+                         std::cout << cha_count_diffs[i][j] << " ";
+                     }
+                     std::cout << std::endl;
+                 }
             }
         } else {
             std::cout << "Unable to open file" << std::endl;
@@ -281,9 +280,9 @@ int main() {
 
         /// Flush the data from the cache in case it is in the cache somehow (might be futile here but just wanted to
         /// make sure).
-        for (int i = 0; i < data.size(); i = i + CACHE_LINE_SIZE) {
-            _mm_clflush(&data[i]);
-        }
+       for (int i = 0; i < data.size(); i = i + CACHE_LINE_SIZE) {
+           _mm_clflush(&data[i]);
+       }
 
         for (int lproc = 0; lproc < NUM_CHA_BOXES; lproc++) {
             LOG_INFO << "Sticking main thread to core " << lproc << "\n";
@@ -354,7 +353,7 @@ int main() {
                         }
 
                         cha_count_diffs[cha][counter] =
-                            after_cha_counts[socket][cha][counter] - before_cha_counts[socket][cha][counter];
+                                after_cha_counts[socket][cha][counter] - before_cha_counts[socket][cha][counter];
                         LOG_INFO << setw(10) << cha_count_diffs[cha][counter] << "\t";
                     }
                     LOG_INFO << "\n";
@@ -365,11 +364,11 @@ int main() {
             cerr << std::format("{}", cm);
         }
     }
-    return 0;
+    return mapping_template1;
 }
 
 cha_mapping::cha_mapping(int cha_boxes, vector<vector<int>> map_template)
-    : cha_boxes(cha_boxes), map_template(map_template) {
+        : cha_boxes(cha_boxes), map_template(map_template) {
     int phys_box = 0;
     max_x = max_y = 0;
     for (auto [indi, mtl] : enumerate(map_template)) {
@@ -405,70 +404,70 @@ void cha_mapping::update_cha_mapping(int counts[][NUM_CHA_COUNTERS], int focus) 
 
         for (int j = 0; j < 4; j++) {
             data_movement[i][j] = total < counts[i][j];
-            data_impossible[i][j] = counts[i][j] < 10;
+            data_impossible[i][j] = counts[i][j] < 1000;
         }
     }
     // check for edges
     for (int i = 0; i < cha_boxes; i++) {
         for (int j = 0; j < 4; j++) {
             possibles[i].erase( //
-                std::remove_if( //
-                    possibles[i].begin(), possibles[i].end(),
-                    [&](int ind) {
-                        auto coord = ind_to_coord[ind];
+                    std::remove_if( //
+                            possibles[i].begin(), possibles[i].end(),
+                            [&](int ind) {
+                                auto coord = ind_to_coord[ind];
 
-                        auto status = // if we aren't sending anything and we should be able to send
-                            (data_impossible[i][j] && (in_bounds(coord + (pair<int, int>)Dir(j)) &&
-                                                       data_sink(coord + (pair<int, int>)Dir(j)))) ||
-                            // or we are sending and we shouldn't be able to
-                            (data_movement[i][j] &&
-                             !(in_bounds(coord + (pair<int, int>)Dir(j)) && data_sink(coord + (pair<int, int>)Dir(j))));
-                        return status;
-                    }),
-                possibles[i].end());
+                                auto status = // if we aren't sending anything and we should be able to send
+                                        (data_impossible[i][j] && (in_bounds(coord + (pair<int, int>)Dir(j)) &&
+                                                                   data_sink(coord + (pair<int, int>)Dir(j)))) ||
+                                        // or we are sending and we shouldn't be able to
+                                        (data_movement[i][j] &&
+                                         !(in_bounds(coord + (pair<int, int>)Dir(j)) && data_sink(coord + (pair<int, int>)Dir(j))));
+                                return status;
+                            }),
+                    possibles[i].end());
         }
     }
     // check for flow
-    // for (int i = 0; i < cha_boxes; i++) {
-    //     int dir = 0;
-    //     for (int j = 1; j < 4; j++) {
-    //         if (counts[i][j] > counts[i][dir]) {
-    //             dir = j;
-    //         }
-    //     }
-    //     pair<int, int> moveDir = Dir(dir);
-    //     int max_dirx = -max_x, max_diry = -max_y;
-    //     for (auto index : possibles[focus]) {
-    //         if (max_dirx < ind_to_coord[index].first * -moveDir.first) {
-    //             max_dirx = ind_to_coord[index].first * -moveDir.first;
-    //         }
-    //         if (max_diry < ind_to_coord[index].second * -moveDir.second) {
-    //             max_diry = ind_to_coord[index].second * -moveDir.second;
-    //         }
-    //     }
-    //     if (max_dirx < 0 || max_diry < 0) {
-    //         max_dirx *= -1;
-    //         max_diry *= -1;
-    //     }
+     for (int i = 0; i < cha_boxes; i++) {
+         int dir = 0;
+         for (int j = 1; j < 4; j++) {
+             if (counts[i][j] > counts[i][dir]) {
+                 dir = j;
+             }
+         }
+         pair<int, int> moveDir = Dir(dir);
+         int max_dirx = -max_x, max_diry = -max_y;
+         for (auto index : possibles[focus]) {
+             if (max_dirx < ind_to_coord[index].first * -moveDir.first) {
+                 max_dirx = ind_to_coord[index].first * -moveDir.first;
+             }
+             if (max_diry < ind_to_coord[index].second * -moveDir.second) {
+                 max_diry = ind_to_coord[index].second * -moveDir.second;
+             }
+         }
+         if (max_dirx < 0 || max_diry < 0) {
+             max_dirx *= -1;
+             max_diry *= -1;
+         }
 
-    //     possibles[i].erase( //
-    //         std::remove_if( //
-    //             possibles[i].begin(), possibles[i].end(),
-    //             [&](int ind) {
-    //                 auto coord = ind_to_coord[ind];
-    //                 bool status = false;
-    //                 if (max_dirx == 0) {
-    //                     // handle verticals
-    //                     return max_diry * moveDir.second <= coord.second * moveDir.second;
-    //                 } else {
-    //                     // return max_dirx * moveDir.first <= coord.first * moveDir.first;
-    //                     // or horizontals
-    //                 }
+         possibles[i].erase( //
+             std::remove_if( //
+                 possibles[i].begin(), possibles[i].end(),
+                 [&](int ind) {
+                     auto coord = ind_to_coord[ind];
+                     bool status = false;
+                     if (max_dirx == 0) {
+                         // handle verticals
+                         return max_diry * moveDir.second <= coord.second * moveDir.second;
+                     } else {
+                          return max_dirx * moveDir.first <= coord.first * moveDir.first;
+                         // or horizontals
+                     }
 
-    //                 return status;
-    //             }),
-    //         possibles[i].end());
-    // }
+                     return status;
+                 }),
+             possibles[i].end());
+     }
 }
 
 bool cha_mapping::in_bounds(pair<int, int> coord) const {
@@ -477,7 +476,7 @@ bool cha_mapping::in_bounds(pair<int, int> coord) const {
 }
 bool cha_mapping::data_sink(pair<int, int> coord) const {
 
-    return map_template[coord.second][coord.first] == 2 || map_template[coord.second][coord.first] == 1;
+    return map_template[coord.second][coord.first] == 2 || map_template[coord.second][coord.first] == 1|| map_template[coord.second][coord.first] == 4;
 }
 int cha_mapping::get_set(int x, int y) const {
     for (auto &[ind, p] : ind_to_coord) {
