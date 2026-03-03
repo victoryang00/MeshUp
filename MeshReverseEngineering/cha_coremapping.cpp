@@ -31,13 +31,16 @@ static constexpr unsigned long FILTER0 = 0x00000000; /// FILTER0.NULL
 static constexpr unsigned long FILTER1 = 0x0000003B; /// FILTER1.NULL
 
 static constexpr int CACHE_LINE_SIZE = 64;
-static constexpr int NUM_SOCKETS = 1;
-static constexpr int NUM_CHA_BOXES = 24;
+static constexpr int MAX_SOCKETS = 8;
+#ifndef SPRTOP_NUM_CHA_BOXES
+#define SPRTOP_NUM_CHA_BOXES 24
+#endif
+static constexpr int NUM_CHA_BOXES = SPRTOP_NUM_CHA_BOXES;
 static constexpr int NUM_CHA_COUNTERS = 4;
 
-uint64_t before_cha_counts[NUM_SOCKETS][NUM_CHA_BOXES][NUM_CHA_COUNTERS];
-uint64_t after_cha_counts[NUM_SOCKETS][NUM_CHA_BOXES][NUM_CHA_COUNTERS];
-long processor_in_socket[NUM_SOCKETS];
+uint64_t before_cha_counts[MAX_SOCKETS][NUM_CHA_BOXES][NUM_CHA_COUNTERS];
+uint64_t after_cha_counts[MAX_SOCKETS][NUM_CHA_BOXES][NUM_CHA_COUNTERS];
+long processor_in_socket[MAX_SOCKETS];
 
 using namespace std;
 
@@ -126,7 +129,7 @@ template <> struct std::formatter<cha_mapping> {
         auto it = ctx.out();
         format_to(it, "CHA_MAPPING:\n");
 
-        for (const auto &[index, possible] : enumerate(m.possibles)) {
+        for (const auto &[index, possible] : std::views::enumerate(m.possibles)) {
             it = std::format_to(it, "{}:", index);
             for (const auto &val : possible) {
                 it = std::format_to(it, "{: >2} ", val);
@@ -161,39 +164,58 @@ int stick_this_thread_to_core(int core_id) {
     pthread_t current_thread = pthread_self();
     return pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
 }
-vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
-    vector<vector<int>> mapping_template1 = {
-            {3, 4, 4, 3, 4, 0, 0}, //
-            {0, -1, -13, -23, 5, -22, 5}, // 1 is a core location
-            {2, 5, -8, -15, -14, 5, 2}, // 2 is IMC (internal memory controller)
-            {-3, -11, -2, 5, -16, -18, -20}, // 3 UPI
-            {-4, -6, -9, -21, -5, 5, 5}, // 4 PCIE/CXL
-            {2, 5, -7, -12, 5, -19, 2}, // 5 Disabled Cores
-            {3, 4, 4, -10, 4, -17, 5}, //
-    };
-    cha_mapping cm(NUM_CHA_BOXES, mapping_template);
+// Detect processor_in_socket by reading physical_package_id from sysfs
+static void detect_processor_in_socket(int num_sockets) {
+    // Initialize to -1
+    for (int i = 0; i < MAX_SOCKETS; i++) {
+        processor_in_socket[i] = -1;
+    }
+    long logical_core_count = sysconf(_SC_NPROCESSORS_ONLN);
+    for (long cpu = 0; cpu < logical_core_count; cpu++) {
+        char path[256];
+        sprintf(path, "/sys/devices/system/cpu/cpu%ld/topology/physical_package_id", cpu);
+        FILE *f = fopen(path, "r");
+        if (f) {
+            int pkg_id = -1;
+            if (fscanf(f, "%d", &pkg_id) == 1) {
+                if (pkg_id >= 0 && pkg_id < num_sockets && processor_in_socket[pkg_id] == -1) {
+                    processor_in_socket[pkg_id] = cpu;
+                    std::cout << "Socket " << pkg_id << " -> CPU " << cpu << std::endl;
+                }
+            }
+            fclose(f);
+        }
+    }
+    // Fallback: if socket 0 not found, use cpu 0
+    if (processor_in_socket[0] == -1) {
+        processor_in_socket[0] = 0;
+    }
+}
+
+vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template, int num_active_chas, int num_sockets = 1) {
+    cha_mapping cm(num_active_chas, mapping_template);
     cout << std::format("{}", cm);
     long logical_core_count = sysconf(_SC_NPROCESSORS_ONLN);
     std::vector<int> msr_fds(logical_core_count);
     char filename[100];
 
-    processor_in_socket[0] = 0;
+    detect_processor_in_socket(num_sockets);
 
     /// in the first place, I will just stick thread to core0 and read data from RAM on this thread.
-    std::filesystem::path file_path("../PMU.txt");
+    std::filesystem::path file_path = std::filesystem::current_path() / "PMU.txt";
 
     if (std::filesystem::exists(file_path)) {
         LOG_INFO << "The file exists.\n";
 
-        int cha_count_diffs[NUM_CHA_BOXES][NUM_CHA_COUNTERS];
+        int cha_count_diffs[NUM_CHA_BOXES][NUM_CHA_COUNTERS]{};
         std::ifstream file(file_path);
         std::string line;
 
         if (file.is_open()) {
 
-            for (int i = 0; i < NUM_CHA_BOXES; i++) {
+            for (int i = 0; i < num_active_chas; i++) {
                 int cha_index = 0;
-                while (std::getline(file, line) && cha_index < NUM_CHA_BOXES) {
+                while (std::getline(file, line) && cha_index < num_active_chas) {
                     printf("Line: %s\n", line.c_str());
                     std::istringstream iss(line);
                     std::string temp;
@@ -211,7 +233,7 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
 
                 // Optional: Print the array to verify
                  printf("CHA count differences for socket 0, iteration %d\n", i);
-                 for (int i = 0; i < NUM_CHA_BOXES; ++i) {
+                 for (int i = 0; i < num_active_chas; ++i) {
                      for (int j = 0; j < NUM_CHA_COUNTERS; ++j) {
                          std::cout << cha_count_diffs[i][j] << " ";
                      }
@@ -227,7 +249,7 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
         for (auto i = 0; i < logical_core_count; ++i) {
             sprintf(filename, "/dev/cpu/%d/msr", i);
             int fd = open(filename, O_RDWR);
-            if (msr_fds[i] == -1) {
+            if (fd == -1) {
                 std::cout << "could not open."
                           << "\n";
                 exit(-1);
@@ -241,11 +263,11 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
         ssize_t rc64 = 0;
         std::vector<unsigned long> counters{LEFT_READ, RIGHT_READ, UP_READ, DOWN_READ}; /// last 2 are actually filters.
 
-        for (int socket = 0; socket < NUM_SOCKETS; ++socket) {
-            for (int cha = 0; cha < NUM_CHA_BOXES; ++cha) {
+        for (int socket = 0; socket < num_sockets; ++socket) {
+            for (int cha = 0; cha < num_active_chas; ++cha) {
                 long core = processor_in_socket[socket];
 
-                for (int counter = 0; counter < counters.size(); ++counter) {
+                for (int counter = 0; counter < (int)counters.size(); ++counter) {
                     msr_num = 0x2000 + 0x10 * cha; // box control register -- set enable bit
                     msr_val = FILTER0;
                     rc64 = pwrite(msr_fds[core], &msr_val, sizeof(msr_val),
@@ -264,7 +286,7 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
 
                     rc64 = pwrite(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
                     if (rc64 < 0) {
-                        fprintf(stdout, "ERROR writing to MSR device on core %d, write %ld bytes\n", core, rc64);
+                        fprintf(stdout, "ERROR writing to MSR device on core %ld, write %zd bytes\n", core, rc64);
                         exit(EXIT_FAILURE);
                     } else {
                         cout << "Configuring socket" << socket << "-CHA" << cha << " by writing 0x" << std::hex
@@ -284,16 +306,16 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
            _mm_clflush(&data[i]);
        }
 
-        for (int lproc = 0; lproc < NUM_CHA_BOXES; lproc++) {
+        for (int lproc = 0; lproc < num_active_chas; lproc++) {
             LOG_INFO << "Sticking main thread to core " << lproc << "\n";
             stick_this_thread_to_core(lproc);
 
             LOG_DEBUG << "---------------- FIRST READINGS ----------------"
                       << "\n";
-            for (int socket = 0; socket < NUM_SOCKETS; ++socket) {
+            for (int socket = 0; socket < num_sockets; ++socket) {
                 long core = processor_in_socket[socket];
 
-                for (int cha = 0; cha < NUM_CHA_BOXES; ++cha) {
+                for (int cha = 0; cha < num_active_chas; ++cha) {
                     for (int counter = 0; counter < NUM_CHA_COUNTERS; ++counter) {
                         msr_num = CHA_MSR_PMON_CTR_BASE + (0x10 * cha) + counter;
                         rc64 = pread(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
@@ -315,10 +337,10 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
 
             LOG_DEBUG << "---------------- SECOND READINGS ----------------"
                       << "\n";
-            for (int socket = 0; socket < NUM_SOCKETS; ++socket) {
+            for (int socket = 0; socket < num_sockets; ++socket) {
                 long core = processor_in_socket[socket];
 
-                for (int cha = 0; cha < NUM_CHA_BOXES; ++cha) {
+                for (int cha = 0; cha < num_active_chas; ++cha) {
                     for (int counter = 0; counter < NUM_CHA_COUNTERS; ++counter) {
                         msr_num = CHA_MSR_PMON_CTR_BASE + (0x10 * cha) + counter;
                         rc64 = pread(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
@@ -336,10 +358,10 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
             LOG_INFO << "---------------- TRAFFIC ANALYSIS ----------------"
                      << "\n";
 
-            int cha_count_diffs[NUM_CHA_BOXES][NUM_CHA_COUNTERS];
+            int cha_count_diffs[NUM_CHA_BOXES][NUM_CHA_COUNTERS]{};
 
-            for (int socket = 0; socket < NUM_SOCKETS; ++socket) {
-                for (int cha = 0; cha < NUM_CHA_BOXES; ++cha) {
+            for (int socket = 0; socket < num_sockets; ++socket) {
+                for (int cha = 0; cha < num_active_chas; ++cha) {
                     LOG_INFO << "Socket" << socket << '-' << "CHA" << cha << ": ";
                     for (int counter = 0; counter < NUM_CHA_COUNTERS; ++counter) {
                         if (counter == 0) {
@@ -364,15 +386,25 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template) {
             cerr << std::format("{}", cm);
         }
     }
-    return mapping_template1;
+    // Build result grid from analysis: encode CHA IDs as -(cha_id + 1)
+    // so CHA 0 -> -1, CHA 1 -> -2, etc. Non-core positions keep their template values.
+    vector<vector<int>> result = mapping_template;
+    for (int cha = 0; cha < num_active_chas; cha++) {
+        if (cm.possibles[cha].size() == 1) {
+            int phys_index = cm.possibles[cha][0];
+            auto [x, y] = cm.ind_to_coord[phys_index];
+            result[y][x] = -(cha + 1);
+        }
+    }
+    return result;
 }
 
 cha_mapping::cha_mapping(int cha_boxes, vector<vector<int>> map_template)
         : cha_boxes(cha_boxes), map_template(map_template) {
     int phys_box = 0;
     max_x = max_y = 0;
-    for (auto [indi, mtl] : enumerate(map_template)) {
-        for (auto [indj, i] : enumerate(mtl)) {
+    for (auto [indi, mtl] : std::views::enumerate(map_template)) {
+        for (auto [indj, i] : std::views::enumerate(mtl)) {
             if (i == 1) {
                 ind_to_coord[phys_box] = pair(indj, indi);
                 phys_box++;

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <algorithm>
 
 // Function to convert CAPID6 register value to a binary string representation
 std::string capid6ToBinaryString(unsigned long capid6Value) {
@@ -58,32 +59,40 @@ std::string parseLscpuOutput(const std::string &output, const std::string &searc
             return line;
         }
     }
+    return "";
 }
 
-std::vector<std::vector<int>> & disabled_core(std::vector<std::vector<int>> &mappingTemplate) {
-
-    // Example CAPID6 value from your setpci command
-    // if 34 bits
+// Enumerate all CAPID6-capable PCI devices (1e.3), sorted by bus number (low bus = socket 0)
+std::vector<std::string> enumerate_capid6_devices() {
+    std::vector<std::string> devices;
     std::string lspciResult = exec("lspci | grep 1e.3");
-    std::regex deviceRegex("(\\w+:\\w+\\.\\w+)"); // Regex to extract device ID
+    std::regex deviceRegex("(\\w+:\\w+\\.\\w+)");
     std::smatch matches;
-    std::string setpciResult;
-    // Use regex to find device IDs in the output
-    while (std::regex_search(lspciResult, matches, deviceRegex)) {
-        for (const auto &match : matches) {
-            std::string device = match.str();
-            std::cout << "Found device: " << device << std::endl;
-
-            // Building the setpci command with the found device ID
-            std::string setpciCmd = "sudo setpci -s " + device + " 0x9c.l";
-            setpciResult = exec(setpciCmd.c_str());
-
-            // Output the result of the setpci command
-            std::cout << "Result of setpci for device " << device << ": " << setpciResult << std::endl;
-        }
-        lspciResult = matches.suffix().str(); // Continue searching in the rest of the string
+    std::string remaining = lspciResult;
+    while (std::regex_search(remaining, matches, deviceRegex)) {
+        devices.push_back(matches[1].str());
+        remaining = matches.suffix().str();
     }
-    unsigned long capid6Value = atoi(setpciResult.c_str());
+    // Sort by bus number (ascending) so socket 0 comes first
+    std::sort(devices.begin(), devices.end());
+    return devices;
+}
+
+std::vector<std::vector<int>> disabled_core(std::vector<std::vector<int>> mappingTemplate,
+                                             const std::string &pci_device) {
+
+    // Read CAPID6 from the specified PCI device
+    std::string setpciCmd = "sudo setpci -s " + pci_device + " 0x9c.l";
+    std::string setpciResult = exec(setpciCmd.c_str());
+    std::cout << "Found device: " << pci_device << std::endl;
+    std::cout << "Result of setpci for device " << pci_device << ": " << setpciResult << std::endl;
+
+    // Trim whitespace then parse as hex
+    setpciResult.erase(setpciResult.find_last_not_of(" \n\r\t") + 1);
+    unsigned long capid6Value = strtoul(setpciResult.c_str(), nullptr, 16);
+
+    std::cout << "Parsed CAPID6 value: 0x" << std::hex << capid6Value << std::dec << std::endl;
+
     std::string binaryString = capid6ToBinaryString(capid6Value);
     binaryString[0] = '1'; // padding first two core
     binaryString[1] = '1';
