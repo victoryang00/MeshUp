@@ -41,6 +41,7 @@ static constexpr int NUM_CHA_COUNTERS = 4;
 uint64_t before_cha_counts[MAX_SOCKETS][NUM_CHA_BOXES][NUM_CHA_COUNTERS];
 uint64_t after_cha_counts[MAX_SOCKETS][NUM_CHA_BOXES][NUM_CHA_COUNTERS];
 long processor_in_socket[MAX_SOCKETS];
+static std::vector<std::vector<long>> cores_per_socket;
 
 using namespace std;
 
@@ -164,12 +165,15 @@ int stick_this_thread_to_core(int core_id) {
     pthread_t current_thread = pthread_self();
     return pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
 }
-// Detect processor_in_socket by reading physical_package_id from sysfs
+// Detect processor_in_socket and cores_per_socket by reading physical_package_id from sysfs
 static void detect_processor_in_socket(int num_sockets) {
     // Initialize to -1
     for (int i = 0; i < MAX_SOCKETS; i++) {
         processor_in_socket[i] = -1;
     }
+    cores_per_socket.clear();
+    cores_per_socket.resize(num_sockets);
+
     long logical_core_count = sysconf(_SC_NPROCESSORS_ONLN);
     for (long cpu = 0; cpu < logical_core_count; cpu++) {
         char path[256];
@@ -178,9 +182,12 @@ static void detect_processor_in_socket(int num_sockets) {
         if (f) {
             int pkg_id = -1;
             if (fscanf(f, "%d", &pkg_id) == 1) {
-                if (pkg_id >= 0 && pkg_id < num_sockets && processor_in_socket[pkg_id] == -1) {
-                    processor_in_socket[pkg_id] = cpu;
-                    std::cout << "Socket " << pkg_id << " -> CPU " << cpu << std::endl;
+                if (pkg_id >= 0 && pkg_id < num_sockets) {
+                    cores_per_socket[pkg_id].push_back(cpu);
+                    if (processor_in_socket[pkg_id] == -1) {
+                        processor_in_socket[pkg_id] = cpu;
+                        std::cout << "Socket " << pkg_id << " -> first CPU " << cpu << std::endl;
+                    }
                 }
             }
             fclose(f);
@@ -192,14 +199,18 @@ static void detect_processor_in_socket(int num_sockets) {
     }
 }
 
-vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template, int num_active_chas, int num_sockets = 1) {
+vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template, int num_active_chas, int num_sockets = 1, int socket_id = 0) {
     cha_mapping cm(num_active_chas, mapping_template);
     cout << std::format("{}", cm);
     long logical_core_count = sysconf(_SC_NPROCESSORS_ONLN);
-    std::vector<int> msr_fds(logical_core_count);
+    std::vector<int> msr_fds(logical_core_count, -1);
     char filename[100];
 
     detect_processor_in_socket(num_sockets);
+
+    // Get the list of cores on the target socket for thread pinning
+    const auto &socket_cores = cores_per_socket[socket_id];
+    long msr_core = processor_in_socket[socket_id]; // core used for MSR reads on this socket
 
     /// in the first place, I will just stick thread to core0 and read data from RAM on this thread.
     std::filesystem::path file_path = std::filesystem::current_path() / "PMU.txt";
@@ -244,125 +255,125 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template, int nu
             std::cout << "Unable to open file" << std::endl;
         }
     } else {
-        // processor_in_socket[1] = logical_core_count - 1;
+        // Try to load the msr kernel module if not already loaded
+        (void)system("modprobe msr 2>/dev/null");
+
         std::cout << "Logical core count: " << logical_core_count << "\n";
+        bool msr_available = true;
         for (auto i = 0; i < logical_core_count; ++i) {
             sprintf(filename, "/dev/cpu/%d/msr", i);
             int fd = open(filename, O_RDWR);
             if (fd == -1) {
-                std::cout << "could not open."
-                          << "\n";
-                exit(-1);
+                std::cerr << "WARNING: could not open " << filename
+                          << " - CHA probing disabled (try: sudo modprobe msr)\n";
+                msr_available = false;
+                break;
             } else {
                 msr_fds[i] = fd;
             }
         }
 
-        uint64_t msr_val = 0;
-        uint64_t msr_num = 0;
-        ssize_t rc64 = 0;
-        std::vector<unsigned long> counters{LEFT_READ, RIGHT_READ, UP_READ, DOWN_READ}; /// last 2 are actually filters.
+        if (msr_available) {
+            uint64_t msr_val = 0;
+            uint64_t msr_num = 0;
+            ssize_t rc64 = 0;
+            std::vector<unsigned long> counters{LEFT_READ, RIGHT_READ, UP_READ, DOWN_READ};
 
-        for (int socket = 0; socket < num_sockets; ++socket) {
+            // Configure CHA counters only on the target socket
             for (int cha = 0; cha < num_active_chas; ++cha) {
-                long core = processor_in_socket[socket];
+                long core = msr_core;
 
                 for (int counter = 0; counter < (int)counters.size(); ++counter) {
-                    msr_num = 0x2000 + 0x10 * cha; // box control register -- set enable bit
+                    msr_num = 0x2000 + 0x10 * cha;
                     msr_val = FILTER0;
-                    rc64 = pwrite(msr_fds[core], &msr_val, sizeof(msr_val),
-                                  msr_num); // box control register -- set enable bit
+                    rc64 = pwrite(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
                     std::cout << rc64 << "\n";
 
-                    msr_num = 0x200e + 0x10 * cha; // box control register -- set enable bit
+                    msr_num = 0x200e + 0x10 * cha;
                     msr_val = FILTER1;
-                    rc64 = pwrite(msr_fds[core], &msr_val, sizeof(msr_val),
-                                  msr_num); // box control register -- set enable bit
+                    rc64 = pwrite(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
                     std::cout << rc64 << "\n";
 
                     msr_val = counters[counter];
                     msr_num = CHA_MSR_PMON_CTRL_BASE + (0x10 * cha) + counter;
-                    // msr_fds[0] for socket 0,
 
                     rc64 = pwrite(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
                     if (rc64 < 0) {
                         fprintf(stdout, "ERROR writing to MSR device on core %ld, write %zd bytes\n", core, rc64);
                         exit(EXIT_FAILURE);
                     } else {
-                        cout << "Configuring socket" << socket << "-CHA" << cha << " by writing 0x" << std::hex
+                        cout << "Configuring socket" << socket_id << "-CHA" << cha << " by writing 0x" << std::hex
                              << msr_val << " to core " << std::dec << core << ", offset 0x" << std::hex << msr_num
                              << std::dec << "\n";
                     }
                 }
             }
-        }
 
-        /// create 2GB of data in RAM that would be accessed by core 0 in the next step.
-        std::vector<int> data(536870912);
+            /// create 2GB of data in RAM that would be accessed by this socket's core in the next step.
+            std::vector<int> data(536870912);
 
-        /// Flush the data from the cache in case it is in the cache somehow (might be futile here but just wanted to
-        /// make sure).
-       for (int i = 0; i < data.size(); i = i + CACHE_LINE_SIZE) {
-           _mm_clflush(&data[i]);
-       }
+            /// Flush the data from the cache
+           for (size_t i = 0; i < data.size(); i = i + CACHE_LINE_SIZE) {
+               _mm_clflush(&data[i]);
+           }
 
-        for (int lproc = 0; lproc < num_active_chas; lproc++) {
-            LOG_INFO << "Sticking main thread to core " << lproc << "\n";
-            stick_this_thread_to_core(lproc);
+            // Iterate over cores on the TARGET socket only
+            int num_probes = std::min((int)socket_cores.size(), num_active_chas);
+            for (int lproc = 0; lproc < num_probes; lproc++) {
+                long actual_core = socket_cores[lproc];
+                LOG_INFO << "Sticking main thread to core " << actual_core << " (socket " << socket_id << " core " << lproc << ")\n";
+                stick_this_thread_to_core(actual_core);
 
-            LOG_DEBUG << "---------------- FIRST READINGS ----------------"
-                      << "\n";
-            for (int socket = 0; socket < num_sockets; ++socket) {
-                long core = processor_in_socket[socket];
-
-                for (int cha = 0; cha < num_active_chas; ++cha) {
-                    for (int counter = 0; counter < NUM_CHA_COUNTERS; ++counter) {
-                        msr_num = CHA_MSR_PMON_CTR_BASE + (0x10 * cha) + counter;
-                        rc64 = pread(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
-                        if (rc64 != sizeof(msr_val)) {
-                            exit(EXIT_FAILURE);
-                        } else {
-                            LOG_DEBUG << "Read " << msr_val << " from socket" << socket << "-CHA" << cha << " on core "
-                                      << core << ", offset 0x" << std::hex << msr_num << std::dec << "\n";
-                            before_cha_counts[socket][cha][counter] = msr_val;
+                LOG_DEBUG << "---------------- FIRST READINGS ----------------"
+                          << "\n";
+                {
+                    long core = msr_core;
+                    for (int cha = 0; cha < num_active_chas; ++cha) {
+                        for (int counter = 0; counter < NUM_CHA_COUNTERS; ++counter) {
+                            msr_num = CHA_MSR_PMON_CTR_BASE + (0x10 * cha) + counter;
+                            rc64 = pread(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
+                            if (rc64 != sizeof(msr_val)) {
+                                exit(EXIT_FAILURE);
+                            } else {
+                                LOG_DEBUG << "Read " << msr_val << " from socket" << socket_id << "-CHA" << cha << " on core "
+                                          << core << ", offset 0x" << std::hex << msr_num << std::dec << "\n";
+                                before_cha_counts[socket_id][cha][counter] = msr_val;
+                            }
                         }
                     }
                 }
-            }
 
-            /// I am basically fetching data from RAM to cache here.
-            for (auto &val : data) {
-                val += 5;
-            }
+                /// I am basically fetching data from RAM to cache here.
+                for (auto &val : data) {
+                    val += 5;
+                }
 
-            LOG_DEBUG << "---------------- SECOND READINGS ----------------"
-                      << "\n";
-            for (int socket = 0; socket < num_sockets; ++socket) {
-                long core = processor_in_socket[socket];
-
-                for (int cha = 0; cha < num_active_chas; ++cha) {
-                    for (int counter = 0; counter < NUM_CHA_COUNTERS; ++counter) {
-                        msr_num = CHA_MSR_PMON_CTR_BASE + (0x10 * cha) + counter;
-                        rc64 = pread(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
-                        if (rc64 != sizeof(msr_val)) {
-                            exit(EXIT_FAILURE);
-                        } else {
-                            LOG_DEBUG << "Read " << msr_val << " from socket" << socket << "-CHA" << cha << " on core "
-                                      << core << ", offset 0x" << std::hex << msr_num << std::dec << "\n";
-                            after_cha_counts[socket][cha][counter] = msr_val;
+                LOG_DEBUG << "---------------- SECOND READINGS ----------------"
+                          << "\n";
+                {
+                    long core = msr_core;
+                    for (int cha = 0; cha < num_active_chas; ++cha) {
+                        for (int counter = 0; counter < NUM_CHA_COUNTERS; ++counter) {
+                            msr_num = CHA_MSR_PMON_CTR_BASE + (0x10 * cha) + counter;
+                            rc64 = pread(msr_fds[core], &msr_val, sizeof(msr_val), msr_num);
+                            if (rc64 != sizeof(msr_val)) {
+                                exit(EXIT_FAILURE);
+                            } else {
+                                LOG_DEBUG << "Read " << msr_val << " from socket" << socket_id << "-CHA" << cha << " on core "
+                                          << core << ", offset 0x" << std::hex << msr_num << std::dec << "\n";
+                                after_cha_counts[socket_id][cha][counter] = msr_val;
+                            }
                         }
                     }
                 }
-            }
 
-            LOG_INFO << "---------------- TRAFFIC ANALYSIS ----------------"
-                     << "\n";
+                LOG_INFO << "---------------- TRAFFIC ANALYSIS ----------------"
+                         << "\n";
 
-            int cha_count_diffs[NUM_CHA_BOXES][NUM_CHA_COUNTERS]{};
+                int cha_count_diffs[NUM_CHA_BOXES][NUM_CHA_COUNTERS]{};
 
-            for (int socket = 0; socket < num_sockets; ++socket) {
                 for (int cha = 0; cha < num_active_chas; ++cha) {
-                    LOG_INFO << "Socket" << socket << '-' << "CHA" << cha << ": ";
+                    LOG_INFO << "Socket" << socket_id << '-' << "CHA" << cha << ": ";
                     for (int counter = 0; counter < NUM_CHA_COUNTERS; ++counter) {
                         if (counter == 0) {
                             LOG_INFO << "left->";
@@ -375,15 +386,18 @@ vector<vector<int>> get_coremapping(vector<vector<int>> mapping_template, int nu
                         }
 
                         cha_count_diffs[cha][counter] =
-                                after_cha_counts[socket][cha][counter] - before_cha_counts[socket][cha][counter];
+                                after_cha_counts[socket_id][cha][counter] - before_cha_counts[socket_id][cha][counter];
                         LOG_INFO << setw(10) << cha_count_diffs[cha][counter] << "\t";
                     }
                     LOG_INFO << "\n";
                 }
-            }
 
-            cm.update_cha_mapping(cha_count_diffs, 0);
-            cerr << std::format("{}", cm);
+                cm.update_cha_mapping(cha_count_diffs, lproc);
+                cerr << std::format("{}", cm);
+            }
+        } else {
+            std::cerr << "WARNING: MSR devices unavailable, skipping CHA probing.\n"
+                      << "Topology grid is still valid. CHA-to-core mapping will be unresolved.\n";
         }
     }
     // Build result grid from analysis: encode CHA IDs as -(cha_id + 1)
@@ -459,47 +473,49 @@ void cha_mapping::update_cha_mapping(int counts[][NUM_CHA_COUNTERS], int focus) 
                     possibles[i].end());
         }
     }
-    // check for flow
-     for (int i = 0; i < cha_boxes; i++) {
-         int dir = 0;
-         for (int j = 1; j < 4; j++) {
-             if (counts[i][j] > counts[i][dir]) {
-                 dir = j;
+    // check for flow — skip if possibles[focus] is empty (prevents cascade wipeout)
+    if (focus >= 0 && focus < cha_boxes && !possibles[focus].empty()) {
+         for (int i = 0; i < cha_boxes; i++) {
+             int dir = 0;
+             for (int j = 1; j < 4; j++) {
+                 if (counts[i][j] > counts[i][dir]) {
+                     dir = j;
+                 }
              }
-         }
-         pair<int, int> moveDir = Dir(dir);
-         int max_dirx = -max_x, max_diry = -max_y;
-         for (auto index : possibles[focus]) {
-             if (max_dirx < ind_to_coord[index].first * -moveDir.first) {
-                 max_dirx = ind_to_coord[index].first * -moveDir.first;
+             pair<int, int> moveDir = Dir(dir);
+             int max_dirx = -max_x, max_diry = -max_y;
+             for (auto index : possibles[focus]) {
+                 if (max_dirx < ind_to_coord[index].first * -moveDir.first) {
+                     max_dirx = ind_to_coord[index].first * -moveDir.first;
+                 }
+                 if (max_diry < ind_to_coord[index].second * -moveDir.second) {
+                     max_diry = ind_to_coord[index].second * -moveDir.second;
+                 }
              }
-             if (max_diry < ind_to_coord[index].second * -moveDir.second) {
-                 max_diry = ind_to_coord[index].second * -moveDir.second;
+             if (max_dirx < 0 || max_diry < 0) {
+                 max_dirx *= -1;
+                 max_diry *= -1;
              }
-         }
-         if (max_dirx < 0 || max_diry < 0) {
-             max_dirx *= -1;
-             max_diry *= -1;
-         }
 
-         possibles[i].erase( //
-             std::remove_if( //
-                 possibles[i].begin(), possibles[i].end(),
-                 [&](int ind) {
-                     auto coord = ind_to_coord[ind];
-                     bool status = false;
-                     if (max_dirx == 0) {
-                         // handle verticals
-                         return max_diry * moveDir.second <= coord.second * moveDir.second;
-                     } else {
-                          return max_dirx * moveDir.first <= coord.first * moveDir.first;
-                         // or horizontals
-                     }
+             possibles[i].erase( //
+                 std::remove_if( //
+                     possibles[i].begin(), possibles[i].end(),
+                     [&](int ind) {
+                         auto coord = ind_to_coord[ind];
+                         bool status = false;
+                         if (max_dirx == 0) {
+                             // handle verticals
+                             return max_diry * moveDir.second <= coord.second * moveDir.second;
+                         } else {
+                              return max_dirx * moveDir.first <= coord.first * moveDir.first;
+                             // or horizontals
+                         }
 
-                     return status;
-                 }),
-             possibles[i].end());
-     }
+                         return status;
+                     }),
+                 possibles[i].end());
+         }
+    }
 }
 
 bool cha_mapping::in_bounds(pair<int, int> coord) const {
@@ -507,8 +523,9 @@ bool cha_mapping::in_bounds(pair<int, int> coord) const {
     return coord.first >= 0 && coord.second >= 0 && coord.first <= max_x && coord.second <= max_y;
 }
 bool cha_mapping::data_sink(pair<int, int> coord) const {
-
-    return map_template[coord.second][coord.first] == 2 || map_template[coord.second][coord.first] == 1|| map_template[coord.second][coord.first] == 4;
+    int v = map_template[coord.second][coord.first];
+    // 1=active core, 2=IMC, 3=UPI, 4=PCIe, 5=disabled core — all have mesh stops
+    return v == 1 || v == 2 || v == 3 || v == 4 || v == 5;
 }
 int cha_mapping::get_set(int x, int y) const {
     for (auto &[ind, p] : ind_to_coord) {
